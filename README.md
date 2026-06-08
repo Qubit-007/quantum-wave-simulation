@@ -51,7 +51,7 @@ pip install torch numpy matplotlib
 
 To initialize one of the active physics simulation visualizers, switch directory contexts and trigger execution:
 ```bash
-python 02_quantum_prisoner/probability_density.py
+python 02_quantum_prisoner.py
 ```
 
 If you have any questions for if something doesn't make sense you can ask...
