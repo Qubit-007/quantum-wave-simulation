@@ -10,6 +10,11 @@ This suite is modularly organized to demonstrate the progression from numerical 
 
 * **`01_single_barrier/`**
   * `single_wall.py`: Tracks a free-moving wave packet colliding with a finite potential step barrier. Extracts and visualizes the complex wave function profile ($\psi$).
+  * 
+
+https://github.com/user-attachments/assets/d1264561-2d9d-4936-ac48-b7d9089a0294
+
+
 * **`02_quantum_prisoner/`**
   * `infinite_well.py`: Simulates dual-barrier configuration bounds ("Quantum Prisoner") trapping a fast-moving particle.
   * `probability_density.py`: Maps the pure real-valued probability density profile ($|\psi|^2$) showing localized particle likelihood maps.
