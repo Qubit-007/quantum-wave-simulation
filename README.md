@@ -17,6 +17,8 @@ https://github.com/user-attachments/assets/d1264561-2d9d-4936-ac48-b7d9089a0294
 
 * **`02_quantum_prisoner/`**
   * `infinite_well.py`: Simulates dual-barrier configuration bounds ("Quantum Prisoner") trapping a fast-moving particle.
+https://github.com/user-attachments/assets/493333a8-aa11-4e1f-a2a9-8800fbb28a0b
+
   * `probability_density.py`: Maps the pure real-valued probability density profile ($|\psi|^2$) showing localized particle likelihood maps.
 * **`03_ai_acceleration/`**
   * *(In Active Development)*: Core architectures for data generation and a custom **Fourier Neural Operator (FNO)** model aimed at predicting quantum states instantly without discrete loop iterations.
