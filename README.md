@@ -10,8 +10,6 @@ This suite is modularly organized to demonstrate the progression from numerical 
 
 * **`01_single_barrier/`**
   * `single_wall.py`: Tracks a free-moving wave packet colliding with a finite potential step barrier. Extracts and visualizes the complex wave function profile ($\psi$).
-  * 
-
 https://github.com/user-attachments/assets/d1264561-2d9d-4936-ac48-b7d9089a0294
 
 
