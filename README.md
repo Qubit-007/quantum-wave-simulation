@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/36eb0761-6815-4f07-9f89-5c1e713da9ab
   * *`04_initial_psi.py`*: Creats intial shape of psi when k = 15 and -8<i<8(version where k is varriable—is in progress)
  <img width="1299" height="847" alt="fno_initial_psi_eval" src="https://github.com/user-attachments/assets/6ef2a5dc-5288-4250-9d1a-2f1d92947dbc" />
 
-  * *`05_fine_tune_psi.py`*: With the help of a fine tuned weights, this model can be scaled for both i and k, though the accuracy depends on the number of times it has been trained. K_op and V_op model in progress, that actually works like 01, 02 and 03.
+  * *`05_fine_tune_psi.py`*: With the help of a fine tuned weights, this model can be scaled for both i and k, though the accuracy depends on the number of times it has been trained. K_op and V_op model in progress, that actually works like 01 and 02.
     <img width="1242" height="827" alt="Screenshot 2026-06-18 123825" src="https://github.com/user-attachments/assets/f663abb4-a302-40f1-871e-f221c1027909" />
 
 
