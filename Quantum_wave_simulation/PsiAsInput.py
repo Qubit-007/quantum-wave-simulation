@@ -24,7 +24,7 @@ X_MAX = 15.0
 DT = 0.0001
 STEPS_PER_FRAME = 50
 DATASET_FRAMES = 30
-DATA_RESTART_EVERY = 1000
+DEFAULT_CYCLES = 1000
 MODEL_PATH = "psi_as_input_fno.pth"
 
 
@@ -177,15 +177,15 @@ def make_training_data(x_grid: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
 
 
 def train_model(
-    model: PsiStepFNO, loops: int, x_grid: torch.Tensor
+    model: PsiStepFNO, loops: int, x_grid: torch.Tensor, cycles: int
 ) -> None:
-    """Train next-step prediction, refreshing source waves every 1,000 epochs."""
+    """Train next-step prediction and refresh data after each cycle."""
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0002)
     model.train()
     started = time.time()
 
     for epoch in range(loops):
-        if epoch % DATA_RESTART_EVERY == 0:
+        if epoch == 0 or (cycles > 1 and epoch % cycles == 0):
             trajectories, packet_conditions = make_training_data(x_grid)
             print(f"\nGenerated fresh training data at epoch {epoch:,}.", flush=True)
 
@@ -281,9 +281,20 @@ def main() -> None:
     parser.add_argument(
         "--loops", type=int, default=5000, help="training epochs (default: 5000)"
     )
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        default=DEFAULT_CYCLES,
+        help=(
+            "epochs between fresh training data sets (default: 1000); "
+            "use 1 to keep one data set for the full run"
+        ),
+    )
     args = parser.parse_args()
     if args.loops < 1:
         parser.error("--loops must be at least 1")
+    if args.cycles < 1:
+        parser.error("--cycles must be at least 1")
 
     print(f"Device: {DEVICE}")
     x_grid = torch.linspace(X_MIN, X_MAX, GRID_POINTS, device=DEVICE)
@@ -292,9 +303,12 @@ def main() -> None:
     print(f"Input mode: {args.input_mode}")
     print(f"Trainable parameters: {parameter_count:,}")
     print(f"Training epochs: {args.loops:,}")
-    print(f"Training data refresh interval: {DATA_RESTART_EVERY:,} epochs")
+    if args.cycles == 1:
+        print("Training data refresh: disabled (one data cycle)")
+    else:
+        print(f"Training data refresh interval: every {args.cycles:,} epochs")
 
-    train_model(model, args.loops, x_grid)
+    train_model(model, args.loops, x_grid, args.cycles)
     show_animation(model, x_grid)
 
     answer = input("Save the trained parameters? [y/N]: ").strip().lower()
