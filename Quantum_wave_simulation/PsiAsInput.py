@@ -189,11 +189,11 @@ def train_model(
             trajectories, packet_conditions = make_training_data(x_grid)
             print(f"\nGenerated fresh training data at epoch {epoch:,}.", flush=True)
 
-        packet_index = torch.randint(trajectories.shape[0], (1,), device=DEVICE).item()
+        packet_index = torch.randint(trajectories.shape[0], (1,), device=DEVICE).item() # type: ignore
         frame_index = torch.randint(DATASET_FRAMES - 1, (1,), device=DEVICE).item()
-        current_psi = trajectories[packet_index, frame_index]
-        target_psi = trajectories[packet_index, frame_index + 1]
-        center, momentum = packet_conditions[packet_index].tolist()
+        current_psi = trajectories[packet_index, frame_index] # type: ignore
+        target_psi = trajectories[packet_index, frame_index + 1] # type: ignore
+        center, momentum = packet_conditions[packet_index].tolist() # type: ignore
         time_value = frame_index * DT * STEPS_PER_FRAME
 
         optimizer.zero_grad(set_to_none=True)
