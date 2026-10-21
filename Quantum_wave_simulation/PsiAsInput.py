@@ -148,7 +148,7 @@ def make_packet(x_grid: torch.Tensor, center: float, momentum: float) -> torch.T
 
 
 def make_trajectory(
-    x_grid: torch.Tensor, center: float, momentum: float
+    x_grid: torch.Tensor, center: float, momentum: float, dataset_frames: int
 ) -> torch.Tensor:
     """Generate split-step snapshots with no potential barrier."""
     dx = x_grid[1] - x_grid[0]
@@ -158,26 +158,35 @@ def make_trajectory(
     kinetic_op = torch.exp(-1j * k_values**2 * DT / 2)
     psi = make_packet(x_grid, center, momentum)
     snapshots = [psi.clone()]
-    for _ in range(DATASET_FRAMES - 1):
+    for _ in range(dataset_frames - 1):
         for _ in range(STEPS_PER_FRAME):
             psi = torch.fft.ifft(torch.fft.fft(psi) * kinetic_op)
         snapshots.append(psi.clone())
     return torch.stack(snapshots)
 
 
-def make_training_data(x_grid: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def make_training_data(
+    x_grid: torch.Tensor, dataset_frames: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Create fresh transition sequences for one training data cycle."""
     centers = torch.empty(2).uniform_(-4.0, 0.0).tolist()
     momenta = torch.empty(2).uniform_(12.0, 18.0).tolist()
     trajectories = torch.stack(
-        [make_trajectory(x_grid, center, momentum) for center, momentum in zip(centers, momenta)]
+        [
+            make_trajectory(x_grid, center, momentum, dataset_frames)
+            for center, momentum in zip(centers, momenta)
+        ]
     )
     conditions = torch.tensor(list(zip(centers, momenta)), device=DEVICE)
     return trajectories, conditions
 
 
 def train_model(
-    model: PsiStepFNO, loops: int, x_grid: torch.Tensor, cycles: int
+    model: PsiStepFNO,
+    loops: int,
+    x_grid: torch.Tensor,
+    cycles: int,
+    dataset_frames: int,
 ) -> None:
     """Train next-step prediction and refresh data after each cycle."""
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0002)
@@ -186,11 +195,11 @@ def train_model(
 
     for epoch in range(loops):
         if epoch == 0 or (cycles > 1 and epoch % cycles == 0):
-            trajectories, packet_conditions = make_training_data(x_grid)
+            trajectories, packet_conditions = make_training_data(x_grid, dataset_frames)
             print(f"\nGenerated fresh training data at epoch {epoch:,}.", flush=True)
 
         packet_index = torch.randint(trajectories.shape[0], (1,), device=DEVICE).item() # type: ignore
-        frame_index = torch.randint(DATASET_FRAMES - 1, (1,), device=DEVICE).item()
+        frame_index = torch.randint(dataset_frames - 1, (1,), device=DEVICE).item()
         current_psi = trajectories[packet_index, frame_index] # type: ignore
         target_psi = trajectories[packet_index, frame_index + 1] # type: ignore
         center, momentum = packet_conditions[packet_index].tolist() # type: ignore
@@ -215,18 +224,20 @@ def train_model(
     print(f"Training finished in {(time.time() - started) / 60:.1f} minutes.")
 
 
-def show_animation(model: PsiStepFNO, x_grid: torch.Tensor) -> None:
+def show_animation(
+    model: PsiStepFNO, x_grid: torch.Tensor, dataset_frames: int
+) -> None:
     """Feed each prediction back in and compare it with split-step evolution."""
     center = -2.0
     momentum = 15.0
-    target_states = make_trajectory(x_grid, center, momentum)
+    target_states = make_trajectory(x_grid, center, momentum, dataset_frames)
     x_plot = x_grid.detach().cpu().numpy()
     target_plot = target_states[0].real.detach().cpu().numpy()
     predicted_states = [target_states[0].clone()]
     current_psi = target_states[0].unsqueeze(0)
     model.eval()
     with torch.no_grad():
-        for frame in range(DATASET_FRAMES - 1):
+        for frame in range(dataset_frames - 1):
             current_psi = model(
                 x_grid,
                 current_psi,
@@ -260,7 +271,7 @@ def show_animation(model: PsiStepFNO, x_grid: torch.Tensor) -> None:
         return target_line, prediction_line
 
     ani = animation.FuncAnimation(
-        fig, animate, frames=DATASET_FRAMES, interval=20, blit=False
+        fig, animate, frames=dataset_frames, interval=20, blit=False
     )
     plt.show()
 
@@ -290,11 +301,21 @@ def main() -> None:
             "use 1 to keep one data set for the full run"
         ),
     )
+    parser.add_argument(
+        "--time",
+        type=int,
+        default=1,
+        help="simulation duration multiplier (default: 1, about 0.15 seconds)",
+    )
     args = parser.parse_args()
     if args.loops < 1:
         parser.error("--loops must be at least 1")
     if args.cycles < 1:
         parser.error("--cycles must be at least 1")
+    if args.time < 1:
+        parser.error("--time must be at least 1")
+
+    dataset_frames = DATASET_FRAMES * args.time
 
     print(f"Device: {DEVICE}")
     x_grid = torch.linspace(X_MIN, X_MAX, GRID_POINTS, device=DEVICE)
@@ -303,13 +324,18 @@ def main() -> None:
     print(f"Input mode: {args.input_mode}")
     print(f"Trainable parameters: {parameter_count:,}")
     print(f"Training epochs: {args.loops:,}")
+    print(
+        f"Simulation duration: about "
+        f"{(dataset_frames - 1) * DT * STEPS_PER_FRAME:.2f} seconds "
+        f"(--time {args.time})"
+    )
     if args.cycles == 1:
         print("Training data refresh: disabled (one data cycle)")
     else:
         print(f"Training data refresh interval: every {args.cycles:,} epochs")
 
-    train_model(model, args.loops, x_grid, args.cycles)
-    show_animation(model, x_grid)
+    train_model(model, args.loops, x_grid, args.cycles, dataset_frames)
+    show_animation(model, x_grid, dataset_frames)
 
     answer = input("Save the trained parameters? [y/N]: ").strip().lower()
     if answer in {"y", "yes"}:
