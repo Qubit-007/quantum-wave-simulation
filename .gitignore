@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+#Files to exculde
+**/psi_presets.pt
+
+
+
 # C extensions
 *.so
 

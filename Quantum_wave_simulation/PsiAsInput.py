@@ -2,6 +2,7 @@
 
 import argparse
 import time
+from pathlib import Path
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -24,8 +25,8 @@ X_MAX = 15.0
 DT = 0.0001
 STEPS_PER_FRAME = 50
 DATASET_FRAMES = 30
-DEFAULT_CYCLES = 1000
-MODEL_PATH = "psi_as_input_fno.pth"
+MODEL_PATH = Path(__file__).resolve().parents[2] / "psi_as_input_fno.pth"
+DATA_PATH = Path(__file__).with_name("psi_presets.pt")
 
 
 class StraightLineBlock(nn.Module):
@@ -105,9 +106,9 @@ class PsiStepFNO(nn.Module):
         self,
         x_grid: torch.Tensor,
         psi: torch.Tensor,
-        time_value: float = 0.0,
-        center: float = -2.0,
-        momentum: float = 15.0,
+        time_value: float | torch.Tensor = 0.0,
+        center: float | torch.Tensor = -2.0,
+        momentum: float | torch.Tensor = 15.0,
     ) -> torch.Tensor:
         # A 1D grid and wave become one-item batches.
         if x_grid.ndim == 1:
@@ -120,12 +121,21 @@ class PsiStepFNO(nn.Module):
             features = psi_features
         else:
             batch, points = x_grid.shape
+
+            def expand_condition(value: float | torch.Tensor) -> torch.Tensor:
+                value_tensor = torch.as_tensor(
+                    value, dtype=x_grid.dtype, device=x_grid.device
+                )
+                if value_tensor.numel() == 1:
+                    return value_tensor.reshape(1, 1).expand(batch, points)
+                return value_tensor.reshape(batch, 1).expand(batch, points)
+
             conditions = torch.stack(
                 (
                     x_grid,
-                    torch.full_like(x_grid, time_value),
-                    torch.full_like(x_grid, center),
-                    torch.full_like(x_grid, momentum),
+                    expand_condition(time_value),
+                    expand_condition(center),
+                    expand_condition(momentum),
                 ),
                 dim=1,
             )
@@ -165,54 +175,37 @@ def make_trajectory(
     return torch.stack(snapshots)
 
 
-def make_training_data(
-    x_grid: torch.Tensor, dataset_frames: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Create fresh transition sequences for one training data cycle."""
-    centers = torch.empty(2).uniform_(-4.0, 0.0).tolist()
-    momenta = torch.empty(2).uniform_(12.0, 18.0).tolist()
-    trajectories = torch.stack(
-        [
-            make_trajectory(x_grid, center, momentum, dataset_frames)
-            for center, momentum in zip(centers, momenta)
-        ]
-    )
-    conditions = torch.tensor(list(zip(centers, momenta)), device=DEVICE)
-    return trajectories, conditions
-
-
 def train_model(
     model: PsiStepFNO,
     loops: int,
     x_grid: torch.Tensor,
-    cycles: int,
-    dataset_frames: int,
+    trajectories: torch.Tensor,
+    packet_conditions: torch.Tensor,
+    batch_size: int,
 ) -> None:
-    """Train next-step prediction and refresh data after each cycle."""
+    """Train batched next-step predictions from precomputed trajectories."""
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0002)
     model.train()
     started = time.time()
+    preset_count, dataset_frames, _ = trajectories.shape
 
     for epoch in range(loops):
-        if epoch == 0 or (cycles > 1 and epoch % cycles == 0):
-            trajectories, packet_conditions = make_training_data(x_grid, dataset_frames)
-            print(f"\nGenerated fresh training data at epoch {epoch:,}.", flush=True)
-
-        packet_index = torch.randint(trajectories.shape[0], (1,), device=DEVICE).item() # type: ignore
-        frame_index = torch.randint(dataset_frames - 1, (1,), device=DEVICE).item()
-        current_psi = trajectories[packet_index, frame_index] # type: ignore
-        target_psi = trajectories[packet_index, frame_index + 1] # type: ignore
-        center, momentum = packet_conditions[packet_index].tolist() # type: ignore
-        time_value = frame_index * DT * STEPS_PER_FRAME
+        preset_indices = torch.randint(preset_count, (batch_size,), device=DEVICE)
+        frame_indices = torch.randint(dataset_frames - 1, (batch_size,), device=DEVICE)
+        current_psi = trajectories[preset_indices, frame_indices]
+        target_psi = trajectories[preset_indices, frame_indices + 1]
+        centers, momenta = packet_conditions[preset_indices].unbind(dim=1)
+        time_values = frame_indices * DT * STEPS_PER_FRAME
+        x_batch = x_grid.unsqueeze(0).expand(batch_size, -1)
 
         optimizer.zero_grad(set_to_none=True)
         prediction = model(
-            x_grid,
+            x_batch,
             current_psi,
-            time_value=time_value,
-            center=center,
-            momentum=momentum,
-        )[0]
+            time_value=time_values,
+            center=centers,
+            momentum=momenta,
+        )
         loss = torch.mean(torch.abs(prediction - target_psi) ** 2)
         loss.backward()
         optimizer.step()
@@ -225,12 +218,14 @@ def train_model(
 
 
 def show_animation(
-    model: PsiStepFNO, x_grid: torch.Tensor, dataset_frames: int
+    model: PsiStepFNO,
+    x_grid: torch.Tensor,
+    target_states: torch.Tensor,
+    center: float,
+    momentum: float,
 ) -> None:
     """Feed each prediction back in and compare it with split-step evolution."""
-    center = -2.0
-    momentum = 15.0
-    target_states = make_trajectory(x_grid, center, momentum, dataset_frames)
+    dataset_frames = target_states.shape[0]
     x_plot = x_grid.detach().cpu().numpy()
     target_plot = target_states[0].real.detach().cpu().numpy()
     predicted_states = [target_states[0].clone()]
@@ -293,49 +288,118 @@ def main() -> None:
         "--loops", type=int, default=5000, help="training epochs (default: 5000)"
     )
     parser.add_argument(
-        "--cycles",
-        type=int,
-        default=DEFAULT_CYCLES,
-        help=(
-            "epochs between fresh training data sets (default: 1000); "
-            "use 1 to keep one data set for the full run"
-        ),
-    )
-    parser.add_argument(
         "--time",
         type=int,
-        default=1,
-        help="simulation duration multiplier (default: 1, about 0.15 seconds)",
+        default=7,
+        help="maximum preset duration multiplier (default: 7, about 1 second)",
+    )
+    parser.add_argument(
+        "--data",
+        default=DATA_PATH,
+        help=f"precomputed preset file (default: {DATA_PATH})",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="training samples processed in parallel per optimizer step (default: 16)",
+    )
+    parser.add_argument(
+        "--test-center",
+        type=float,
+        default=-2.0,
+        help="center of the Gaussian used only for the evaluation test (default: -2.0)",
+    )
+    parser.add_argument(
+        "--test-momentum",
+        type=float,
+        default=15.0,
+        help="momentum of the Gaussian used only for the evaluation test (default: 15.0)",
+    )
+    parser.add_argument(
+        "--fine-tune",
+        nargs="?",
+        const=MODEL_PATH,
+        default=None,
+        type=Path,
+        metavar="WEIGHTS",
+        help="load existing weights before training (default path is the saved model)",
+    )
+    parser.add_argument(
+        "--test-only",
+        action="store_true",
+        help="test loaded weights without training; requires --fine-tune",
     )
     args = parser.parse_args()
-    if args.loops < 1:
-        parser.error("--loops must be at least 1")
-    if args.cycles < 1:
-        parser.error("--cycles must be at least 1")
+    if args.loops < 1 and not args.test_only:
+        parser.error("--loops must be at least 1 unless --test-only is used")
     if args.time < 1:
         parser.error("--time must be at least 1")
-
-    dataset_frames = DATASET_FRAMES * args.time
+    if args.batch_size < 1:
+        parser.error("--batch-size must be at least 1")
+    if args.test_only and args.fine_tune is None:
+        parser.error("--test-only requires --fine-tune to load trained weights")
 
     print(f"Device: {DEVICE}")
     x_grid = torch.linspace(X_MIN, X_MAX, GRID_POINTS, device=DEVICE)
     model = PsiStepFNO(args.input_mode).to(DEVICE)
+    if args.fine_tune is not None:
+        try:
+            model.load_state_dict(
+                torch.load(args.fine_tune, map_location=DEVICE, weights_only=True)
+            )
+        except FileNotFoundError:
+            parser.error(f"weights file '{args.fine_tune}' was not found")
+        print(f"Loaded weights: {args.fine_tune}")
+
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     print(f"Input mode: {args.input_mode}")
     print(f"Trainable parameters: {parameter_count:,}")
-    print(f"Training epochs: {args.loops:,}")
-    print(
-        f"Simulation duration: about "
-        f"{(dataset_frames - 1) * DT * STEPS_PER_FRAME:.2f} seconds "
-        f"(--time {args.time})"
-    )
-    if args.cycles == 1:
-        print("Training data refresh: disabled (one data cycle)")
-    else:
-        print(f"Training data refresh interval: every {args.cycles:,} epochs")
 
-    train_model(model, args.loops, x_grid, args.cycles, dataset_frames)
-    show_animation(model, x_grid, dataset_frames)
+    if args.test_only:
+        test_frames = DATASET_FRAMES * args.time
+        print(f"Testing saved weights for {(test_frames - 1) * DT * STEPS_PER_FRAME:.3f} seconds")
+        target_states = make_trajectory(
+            x_grid, args.test_center, args.test_momentum, test_frames
+        )
+        show_animation(
+            model, x_grid, target_states, args.test_center, args.test_momentum
+        )
+        return
+
+    try:
+        saved_data = torch.load(args.data, map_location=DEVICE, weights_only=True)
+    except FileNotFoundError:
+        parser.error(
+            f"data file '{args.data}' was not found; generate it first with Data.py"
+        )
+    if saved_data.get("version") != 1:
+        parser.error(f"unsupported or invalid preset file: {args.data}")
+    trajectories = saved_data["trajectories"].to(DEVICE)
+    packet_conditions = saved_data["conditions"].to(DEVICE)
+    dataset_frames = min(DATASET_FRAMES * args.time, trajectories.shape[1])
+    trajectories = trajectories[:, :dataset_frames]
+    duration_seconds = (dataset_frames - 1) * DT * STEPS_PER_FRAME
+
+    print(f"Training epochs: {args.loops:,}")
+    print(f"Training presets: {trajectories.shape[0]:,}")
+    print(f"Training batch size: {args.batch_size}")
+    print(f"Preset duration: {duration_seconds:.3f} seconds")
+
+    train_model(
+        model,
+        args.loops,
+        x_grid,
+        trajectories,
+        packet_conditions,
+        args.batch_size,
+    )
+    test_states = make_trajectory(
+        x_grid, args.test_center, args.test_momentum, DATASET_FRAMES * args.time
+    )
+    show_animation(
+        model, x_grid, test_states, args.test_center, args.test_momentum
+    )
 
     answer = input("Save the trained parameters? [y/N]: ").strip().lower()
     if answer in {"y", "yes"}:
